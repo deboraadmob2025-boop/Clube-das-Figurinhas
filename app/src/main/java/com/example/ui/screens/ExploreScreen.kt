@@ -14,6 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,6 +48,7 @@ fun ExploreScreen(viewModel: StickerViewModel) {
     val trendingPacks by viewModel.trendingPacks.collectAsState()
     val popularPacks by viewModel.popularPacks.collectAsState()
     val downloadedPacks by viewModel.downloadedPacks.collectAsState()
+    val likedPacks by viewModel.likedPacks.collectAsState()
 
     // Handle Toast listener for WhatsApp export events
     LaunchedEffect(Unit) {
@@ -230,7 +233,12 @@ fun ExploreScreen(viewModel: StickerViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             items(trendingPacks) { pack ->
-                                TrendingPackCard(pack, viewModel, downloadedPacks.contains(pack.id))
+                                TrendingPackCard(
+                                    pack = pack,
+                                    viewModel = viewModel,
+                                    isDownloaded = downloadedPacks.contains(pack.id),
+                                    isLiked = likedPacks.contains(pack.id)
+                                )
                             }
                         }
                     }
@@ -261,7 +269,12 @@ fun ExploreScreen(viewModel: StickerViewModel) {
                 }
             } else {
                 items(popularPacks) { pack ->
-                    PopularPackRow(pack, viewModel, downloadedPacks.contains(pack.id))
+                    PopularPackRow(
+                        pack = pack,
+                        viewModel = viewModel,
+                        isDownloaded = downloadedPacks.contains(pack.id),
+                        isLiked = likedPacks.contains(pack.id)
+                    )
                 }
             }
         }
@@ -273,7 +286,12 @@ fun ExploreScreen(viewModel: StickerViewModel) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TrendingPackCard(pack: StickerPack, viewModel: StickerViewModel, isDownloaded: Boolean) {
+fun TrendingPackCard(
+    pack: StickerPack,
+    viewModel: StickerViewModel,
+    isDownloaded: Boolean,
+    isLiked: Boolean
+) {
     val context = LocalContext.current
     Card(
         modifier = Modifier
@@ -294,14 +312,35 @@ fun TrendingPackCard(pack: StickerPack, viewModel: StickerViewModel, isDownloade
                 verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = pack.name,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = pack.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = {
+                                viewModel.toggleLikePack(pack.id)
+                                val toastMsg = if (isLiked) "Removido dos favoritos" else "Adicionado aos favoritos (enviado para API!)"
+                                Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = "Toggle favorite",
+                                tint = if (isLiked) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                     Text(
                         text = "por ${pack.creator}",
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -342,7 +381,7 @@ fun TrendingPackCard(pack: StickerPack, viewModel: StickerViewModel, isDownloade
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val previewStickers = pack.stickers.take(6)
+                    val previewStickers = (pack.stickers ?: emptyList()).take(6)
                     previewStickers.forEach { sticker ->
                         Card(
                             modifier = Modifier
@@ -421,7 +460,13 @@ fun TrendingPackCard(pack: StickerPack, viewModel: StickerViewModel, isDownloade
 }
 
 @Composable
-fun PopularPackRow(pack: StickerPack, viewModel: StickerViewModel, isDownloaded: Boolean) {
+fun PopularPackRow(
+    pack: StickerPack,
+    viewModel: StickerViewModel,
+    isDownloaded: Boolean,
+    isLiked: Boolean
+) {
+    val context = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -449,7 +494,7 @@ fun PopularPackRow(pack: StickerPack, viewModel: StickerViewModel, isDownloaded:
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Image(
-                        painter = rememberAsyncImagePainter(pack.stickers.firstOrNull()?.imageUrl),
+                        painter = rememberAsyncImagePainter((pack.stickers ?: emptyList()).firstOrNull()?.imageUrl),
                         contentDescription = pack.name,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -494,24 +539,43 @@ fun PopularPackRow(pack: StickerPack, viewModel: StickerViewModel, isDownloaded:
                 }
             }
 
-            IconButton(
-                onClick = {
-                    viewModel.downloadPackToDevice(pack.id)
-                    viewModel.exportPackToWhatsApp(pack.name)
-                },
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isDownloaded) MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
-                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = {
+                        viewModel.toggleLikePack(pack.id)
+                        val toastMsg = if (isLiked) "Removido dos favoritos" else "Adicionado aos favoritos (enviado para API!)"
+                        Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = "Toggle favorite from popular pack list",
+                        tint = if (isLiked) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-            ) {
-                Icon(
-                    imageVector = if (isDownloaded) Icons.Default.Check else Icons.Default.Add,
-                    contentDescription = "Adicionar ao whatsapp",
-                    tint = if (isDownloaded) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
-                )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                IconButton(
+                    onClick = {
+                        viewModel.downloadPackToDevice(pack.id)
+                        viewModel.exportPackToWhatsApp(pack.name)
+                    },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isDownloaded) MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (isDownloaded) Icons.Default.Check else Icons.Default.Add,
+                        contentDescription = "Adicionar ao whatsapp",
+                        tint = if (isDownloaded) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }

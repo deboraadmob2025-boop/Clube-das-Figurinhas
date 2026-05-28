@@ -60,6 +60,17 @@ data class SystemConfig(
     val policy_url: String
 )
 
+data class NotificationResponse(
+    val id: Int,
+    val title: String,
+    val message: String,
+    val sentAt: String
+)
+
+data class FavoriteResponse(
+    val is_favorite: Boolean
+)
+
 interface StickerApiService {
 
     @POST("api/login.php")
@@ -85,6 +96,14 @@ interface StickerApiService {
         @Query("q") query: String
     ): ApiResponse<List<StickerPack>>
 
+    @GET("api/get_stickers.php")
+    suspend fun getStickers(
+        @Query("pack_id") packId: Int
+    ): ApiResponse<List<Sticker>>
+
+    @GET("api/notifications.php")
+    suspend fun getNotifications(): ApiResponse<List<NotificationResponse>>
+
     @GET("api/ads.php")
     suspend fun getAdConfigs(): ApiResponse<List<AdPlacement>>
 
@@ -95,11 +114,11 @@ interface StickerApiService {
     suspend fun toggleFavorite(
         @Header("Authorization") token: String,
         @Body body: Map<String, Int>
-    ): ApiResponse<Map<String, Boolean>>
+    ): ApiResponse<FavoriteResponse>
 
     companion object {
-        // Base Development URL falling back gracefully to a mockable web preview
-        private const val BASE_URL = "https://mystickerstore.com/"
+        // Base API Server Endpoint
+        private const val BASE_URL = "https://kingpixcash.maicondroidoficial.com/"
 
         fun create(): StickerApiService {
             val loggingInterceptor = HttpLoggingInterceptor().apply {

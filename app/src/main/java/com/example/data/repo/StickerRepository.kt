@@ -5,6 +5,7 @@ import com.example.data.local.StickerPackDao
 import com.example.data.model.MockData
 import com.example.data.model.Sticker
 import com.example.data.model.StickerPack
+import com.example.data.remote.NotificationResponse
 import com.example.data.remote.StickerApiService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -23,7 +24,7 @@ class StickerRepository(
             } else {
                 MockData.categories
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             MockData.categories
         }
     }
@@ -39,7 +40,7 @@ class StickerRepository(
             } else {
                 MockData.trendingPacks
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             MockData.trendingPacks
         }
     }
@@ -58,7 +59,7 @@ class StickerRepository(
                     it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true)
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             MockData.trendingPacks.filter {
                 it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true)
             }
@@ -74,7 +75,7 @@ class StickerRepository(
             } else {
                 MockData.popularPacks
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             MockData.popularPacks
         }
     }
@@ -135,5 +136,44 @@ class StickerRepository(
 
     suspend fun toggleFavorite(localId: Int, isFav: Boolean) {
         stickerPackDao.updateFavorite(localId, isFav)
+    }
+
+    suspend fun getNotificationsRemote(): List<NotificationResponse> {
+        return try {
+            val response = apiService.getNotifications()
+            if (response.success && response.data != null) {
+                response.data
+            } else {
+                emptyList()
+            }
+        } catch (e: Throwable) {
+            emptyList()
+        }
+    }
+
+    suspend fun getStickersRemote(packId: Int): List<Sticker> {
+        return try {
+            val response = apiService.getStickers(packId)
+            if (response.success && response.data != null) {
+                response.data
+            } else {
+                emptyList()
+            }
+        } catch (e: Throwable) {
+            emptyList()
+        }
+    }
+
+    suspend fun toggleRemoteFavorite(token: String, packId: Int): Boolean {
+        return try {
+            val response = apiService.toggleFavorite("Bearer $token", mapOf("pack_id" to packId))
+            if (response.success && response.data != null) {
+                response.data.is_favorite
+            } else {
+                false
+            }
+        } catch (e: Throwable) {
+            false
+        }
     }
 }

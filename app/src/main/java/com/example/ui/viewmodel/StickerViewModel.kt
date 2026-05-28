@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.MockData
 import com.example.data.model.StickerPack
+import com.example.data.remote.NotificationResponse
 import com.example.data.repo.StickerRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -80,7 +81,7 @@ class StickerViewModel(private val repository: StickerRepository) : ViewModel() 
     }
 
     // --- Marketplace Explore Stats (Trending / Popular / Favorites) ---
-    private val _selectedCategory = MutableStateFlow("Memes")
+    private val _selectedCategory = MutableStateFlow("todos")
     val selectedCategory: StateFlow<String> = _selectedCategory.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
@@ -89,9 +90,56 @@ class StickerViewModel(private val repository: StickerRepository) : ViewModel() 
     private val _categoriesState = MutableStateFlow(repository.getCategories())
     val categoriesState: StateFlow<List<String>> = _categoriesState.asStateFlow()
 
+    private val _notificationsState = MutableStateFlow<List<NotificationResponse>>(emptyList())
+    val notificationsState: StateFlow<List<NotificationResponse>> = _notificationsState.asStateFlow()
+
+    private val _remoteTrendingPacks = MutableStateFlow<List<StickerPack>>(emptyList())
+    private val _remotePopularPacks = MutableStateFlow<List<StickerPack>>(emptyList())
+
+    private val _apiLoading = MutableStateFlow(false)
+    val apiLoading: StateFlow<Boolean> = _apiLoading.asStateFlow()
+
     init {
+        loadApiData()
+        fetchNotifications()
+    }
+
+    fun loadApiData() {
         viewModelScope.launch {
-            _categoriesState.value = repository.getCategoriesRemote()
+            _apiLoading.value = true
+            try {
+                val cats = repository.getCategoriesRemote()
+                val updatedCats = mutableListOf("todos")
+                updatedCats.addAll(cats.filter { it.lowercase() != "todos" })
+                _categoriesState.value = updatedCats
+            } catch (t: Throwable) {
+                _categoriesState.value = listOf("todos") + repository.getCategories()
+            }
+
+            try {
+                val trending = repository.getTrendingPacksRemote()
+                _remoteTrendingPacks.value = trending
+            } catch (t: Throwable) {
+                _remoteTrendingPacks.value = repository.getTrendingPacks()
+            }
+
+            try {
+                val popular = repository.getPopularPacksRemote()
+                _remotePopularPacks.value = popular
+            } catch (t: Throwable) {
+                _remotePopularPacks.value = repository.getPopularPacks()
+            }
+            _apiLoading.value = false
+        }
+    }
+
+    fun fetchNotifications() {
+        viewModelScope.launch {
+            try {
+                _notificationsState.value = repository.getNotificationsRemote()
+            } catch (e: Throwable) {
+                _notificationsState.value = emptyList()
+            }
         }
     }
 
@@ -105,23 +153,35 @@ class StickerViewModel(private val repository: StickerRepository) : ViewModel() 
         _searchQuery.value = query
     }
 
-    // Observes live remote trending packs filtered by categories & search
+    // Observes live remote trending packs filtered by categories & search in memory safely
     val trendingPacks: StateFlow<List<StickerPack>> = combine(
-        _selectedCategory, _searchQuery
-    ) { category, query ->
-        val packs = repository.getTrendingPacksRemote()
-        packs.filter {
-            (it.category.lowercase() == category.lowercase() || category == "Memes" || category.lowercase() == "todos") &&
-                    (it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true))
+        _remoteTrendingPacks, _selectedCategory, _searchQuery
+    ) { packs, category, query ->
+        val source = if (packs.isEmpty()) repository.getTrendingPacks() else packs
+        source.filter {
+            val cat = (it.category ?: "General").lowercase()
+            val nm = it.name ?: "Pacote Sem Nome"
+            val cr = it.creator ?: "Criador Anônimo"
+            val currentCategory = category ?: "todos"
+            val matchesCategory = currentCategory.lowercase() == "todos" || currentCategory.lowercase() == "memes" || cat == currentCategory.lowercase()
+            val matchesQuery = query.isEmpty() || nm.contains(query, ignoreCase = true) || cr.contains(query, ignoreCase = true)
+            matchesCategory && matchesQuery
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getTrendingPacks())
 
-    // Observes live popular packs from backend with query search results
-    val popularPacks: StateFlow<List<StickerPack>> = _searchQuery.map { query ->
+    // Observes live popular packs filtered in memory safely
+    val popularPacks: StateFlow<List<StickerPack>> = combine(
+        _remotePopularPacks, _searchQuery
+    ) { packs, query ->
+        val source = if (packs.isEmpty()) repository.getPopularPacks() else packs
         if (query.isEmpty()) {
-            repository.getPopularPacksRemote()
+            source
         } else {
-            repository.searchPacksRemote(query)
+            source.filter {
+                val nm = it.name ?: ""
+                val cr = it.creator ?: ""
+                nm.contains(query, ignoreCase = true) || cr.contains(query, ignoreCase = true)
+            }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getPopularPacks())
 
@@ -137,9 +197,25 @@ class StickerViewModel(private val repository: StickerRepository) : ViewModel() 
     val downloadedPacks: StateFlow<Set<String>> = _downloadedPacks.asStateFlow()
 
     fun toggleLikePack(packId: String) {
-        val current = _likedPacks.value.toMutableSet()
-        if (current.contains(packId)) current.remove(packId) else current.add(packId)
-        _likedPacks.value = current
+        viewModelScope.launch {
+            val current = _likedPacks.value.toMutableSet()
+            val isFav = !current.contains(packId)
+            
+            if (current.contains(packId)) {
+                current.remove(packId)
+            } else {
+                current.add(packId)
+            }
+            _likedPacks.value = current
+
+            // Demonstrates sending favorites live to API REST server (como enviar favoritos)
+            try {
+                val packIntId = packId.filter { it.isDigit() }.toIntOrNull() ?: 1
+                repository.toggleRemoteFavorite("session_mock_token_key_12345", packIntId)
+            } catch (t: Throwable) {
+                // Fail silently or log
+            }
+        }
     }
 
     // Background remove simulator, downloading packs, etc.

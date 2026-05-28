@@ -15,6 +15,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +40,9 @@ fun ProfileScreen(viewModel: StickerViewModel) {
     val avatar by viewModel.userAvatar.collectAsState()
     val name by viewModel.userName.collectAsState()
     val isPremium by viewModel.isPremiumMember.collectAsState()
+    val notifications by viewModel.notificationsState.collectAsState()
+
+    var showNotificationsDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
     val goldGradient = Brush.linearGradient(
         colors = listOf(Color(0xFFFFD700), Color(0xFFFFA500))
@@ -257,21 +263,24 @@ fun ProfileScreen(viewModel: StickerViewModel) {
                             subValue = "Português (Brasil)",
                             onClick = { Toast.makeText(context, "Idioma alterado para Português!", Toast.LENGTH_SHORT).show() }
                         )
-                        Divider(color = Color.White.copy(alpha = 0.05f))
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                         AccountSettingsItem(
                             icon = "🔔",
                             title = "Notificações",
-                            subValue = "Push, Email e SMS Ativos",
-                            onClick = { }
+                            subValue = "Toque para ver mensagens da API",
+                            onClick = {
+                                viewModel.fetchNotifications()
+                                showNotificationsDialog = true
+                            }
                         )
-                        Divider(color = Color.White.copy(alpha = 0.05f))
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                         AccountSettingsItem(
                             icon = "💳",
                             title = "Plano de Assinatura",
                             subValue = if (isPremium) "Plano Premium Ativo ($1.99)" else "Free Tier (Gratuito)",
                             onClick = { viewModel.togglePremium() }
                         )
-                        Divider(color = Color.White.copy(alpha = 0.05f))
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                         AccountSettingsItem(
                             icon = "❓",
                             title = "Ajuda & Suporte",
@@ -321,6 +330,82 @@ fun ProfileScreen(viewModel: StickerViewModel) {
         }
 
         BottomNavigationBar(viewModel, currentActiveScreen = Screen.Profile)
+
+        if (showNotificationsDialog) {
+            AlertDialog(
+                onDismissRequest = { showNotificationsDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("🔔", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Notificações API",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                },
+                text = {
+                    if (notifications.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "A conexão com a API está excelente, mas nenhuma notificação foi logada no banco do servidor até o momento.",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(notifications) { item ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                    )
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = item.title,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = item.message,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Data: ${item.sentAt}",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showNotificationsDialog = false }) {
+                        Text("Fechar")
+                    }
+                }
+            )
+        }
     }
 }
 
