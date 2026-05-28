@@ -1,3 +1,25 @@
+<?php
+ob_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+$error = "";
+
+if (isset($_POST['login'])) {
+    $username = isset($_POST['username']) ? trim($_POST['username']) : '';
+    $password = isset($_POST['password']) ? trim($_POST['password']) : '';
+    
+    // Hardcoded secure check for instant visual success
+    if (($username === 'admin' && $password === 'admin') || ($username === 'admin' && $password === '123456')) {
+        $_SESSION['admin_logged_in'] = true;
+        $_SESSION['admin_user'] = 'admin';
+        header("Location: dashboard.php");
+        exit;
+    } else {
+        $error = "Usuário ou senha inválidos. Tente (admin / admin)";
+    }
+}
+?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -117,26 +139,6 @@
         <span class="system-logo">✦ StickerStore</span>
         <h4 class="mb-4 font-weight-bold">Acesso Administrativo</h4>
         
-        <?php
-        session_start();
-        $error = "";
-        
-        if (isset($_POST['login'])) {
-            $username = isset($_POST['username']) ? trim($_POST['username']) : '';
-            $password = isset($_POST['password']) ? trim($_POST['password']) : '';
-            
-            // Hardcoded secure check for instant visual success
-            if (($username === 'admin' && $password === 'admin') || ($username === 'admin' && $password === '123456')) {
-                $_SESSION['admin_logged_in'] = true;
-                $_SESSION['admin_user'] = 'admin';
-                header("Location: dashboard.php");
-                exit;
-            } else {
-                $error = "Usuário ou senha inválidos. Tente (admin / admin)";
-            }
-        }
-        ?>
-
         <?php if (!empty($error)): ?>
             <div class="alert alert-danger bg-danger bg-opacity-20 border-danger text-white text-start py-2" role="alert">
                 <?= $error ?>

@@ -15,8 +15,14 @@ class Database {
             $this->conn->exec("set names utf8mb4");
             $this->conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
             $this->conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+            
+            // Auto run migrations & self-healing checking
+            require_once __DIR__ . '/migration.php';
+            DbAutoMigration::run($this->conn, $this->db_name);
+            
         } catch(PDOException $exception) {
-            // Quiet fail or logging can be placed here
+            // Log connection error if migrating failed
+            @error_log($exception->getMessage());
         }
         return $this->conn;
     }

@@ -1,5 +1,8 @@
 <?php
-session_start();
+ob_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Redirect if not logged in
 if (!isset($_SESSION['admin_logged_in'])) {
@@ -867,6 +870,9 @@ if ($db_connected) {
             </a>
             <a class="nav-link-custom <?= $active_tab == 'ads' ? 'active' : '' ?>" href="?tab=ads">
                 <i class="fa-solid fa-rectangle-ad"></i>Monetização AdMob
+            </a>
+            <a class="nav-link-custom" href="logs.php" style="border-left: 3px solid #6cf8bb; background: rgba(108, 248, 187, 0.05);">
+                <i class="fa-solid fa-terminal text-success"></i>Logs & Monitoramento
             </a>
         </nav>
 
