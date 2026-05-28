@@ -86,34 +86,42 @@ class StickerViewModel(private val repository: StickerRepository) : ViewModel() 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    private val _categoriesState = MutableStateFlow(repository.getCategories())
+    val categoriesState: StateFlow<List<String>> = _categoriesState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            _categoriesState.value = repository.getCategoriesRemote()
+        }
+    }
+
     fun setCategory(category: String) {
         _selectedCategory.value = category
     }
 
-    fun getCategories(): List<String> = repository.getCategories()
+    fun getCategories(): List<String> = categoriesState.value
 
     fun searchPacks(query: String) {
         _searchQuery.value = query
     }
 
-    // Observes static trending packs filtered by categories & search
+    // Observes live remote trending packs filtered by categories & search
     val trendingPacks: StateFlow<List<StickerPack>> = combine(
         _selectedCategory, _searchQuery
     ) { category, query ->
-        repository.getTrendingPacks().filter {
-            (it.category.lowercase() == category.lowercase() || category == "Memes") &&
+        val packs = repository.getTrendingPacksRemote()
+        packs.filter {
+            (it.category.lowercase() == category.lowercase() || category == "Memes" || category.lowercase() == "todos") &&
                     (it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true))
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getTrendingPacks())
 
-    // Observes popular packs from backend
+    // Observes live popular packs from backend with query search results
     val popularPacks: StateFlow<List<StickerPack>> = _searchQuery.map { query ->
         if (query.isEmpty()) {
-            repository.getPopularPacks()
+            repository.getPopularPacksRemote()
         } else {
-            repository.getPopularPacks().filter {
-                it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true)
-            }
+            repository.searchPacksRemote(query)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.getPopularPacks())
 

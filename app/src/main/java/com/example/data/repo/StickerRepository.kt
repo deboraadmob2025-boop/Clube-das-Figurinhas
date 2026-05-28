@@ -5,17 +5,81 @@ import com.example.data.local.StickerPackDao
 import com.example.data.model.MockData
 import com.example.data.model.Sticker
 import com.example.data.model.StickerPack
+import com.example.data.remote.StickerApiService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-class StickerRepository(private val stickerPackDao: StickerPackDao) {
+class StickerRepository(
+    private val stickerPackDao: StickerPackDao,
+    private val apiService: StickerApiService = StickerApiService.create()
+) {
 
-    // Mock servers lists representation
-    fun getTrendingPacks(): List<StickerPack> = MockData.trendingPacks
-
-    fun getPopularPacks(): List<StickerPack> = MockData.popularPacks
+    // Fetch live categories from network, fallback to offline defaults on failure
+    suspend fun getCategoriesRemote(): List<String> {
+        return try {
+            val response = apiService.getCategories()
+            if (response.success && response.data != null) {
+                response.data.map { it.name }
+            } else {
+                MockData.categories
+            }
+        } catch (e: Exception) {
+            MockData.categories
+        }
+    }
 
     fun getCategories(): List<String> = MockData.categories
+
+    // Fetch and sync trending packs from live API, with offline fallback
+    suspend fun getTrendingPacksRemote(): List<StickerPack> {
+        return try {
+            val response = apiService.getTrendingPacks()
+            if (response.success && response.data != null) {
+                response.data
+            } else {
+                MockData.trendingPacks
+            }
+        } catch (e: Exception) {
+            MockData.trendingPacks
+        }
+    }
+
+    fun getTrendingPacks(): List<StickerPack> = MockData.trendingPacks
+
+    // Fetch packs by search query from remote server, with fallback
+    suspend fun searchPacksRemote(query: String): List<StickerPack> {
+        if (query.isBlank()) return getPopularPacksRemote()
+        return try {
+            val response = apiService.searchPacks(query)
+            if (response.success && response.data != null) {
+                response.data
+            } else {
+                MockData.trendingPacks.filter {
+                    it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true)
+                }
+            }
+        } catch (e: Exception) {
+            MockData.trendingPacks.filter {
+                it.name.contains(query, ignoreCase = true) || it.creator.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    // Fetch popular packs from remote API, falling back to local list on failure
+    suspend fun getPopularPacksRemote(): List<StickerPack> {
+        return try {
+            val response = apiService.getPacks(category = null, page = 1, limit = 20)
+            if (response.success && response.data != null) {
+                response.data
+            } else {
+                MockData.popularPacks
+            }
+        } catch (e: Exception) {
+            MockData.popularPacks
+        }
+    }
+
+    fun getPopularPacks(): List<StickerPack> = MockData.popularPacks
 
     // Fetch Custom user packs
     val localPacks: Flow<List<StickerPack>> = stickerPackDao.getAllPacks().map { entities ->
