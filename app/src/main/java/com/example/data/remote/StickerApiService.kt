@@ -2,6 +2,8 @@ package com.example.data.remote
 
 import com.example.data.model.Sticker
 import com.example.data.model.StickerPack
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
@@ -110,10 +112,14 @@ interface StickerApiService {
                 .addInterceptor(loggingInterceptor)
                 .build()
 
+            val moshi = Moshi.Builder()
+                .add(KotlinJsonAdapterFactory())
+                .build()
+
             return Retrofit.Builder()
                 .baseUrl(BASE_URL)
                 .client(client)
-                .addConverterFactory(MoshiConverterFactory.create())
+                .addConverterFactory(MoshiConverterFactory.create(moshi))
                 .build()
                 .create(StickerApiService::class.java)
         }
