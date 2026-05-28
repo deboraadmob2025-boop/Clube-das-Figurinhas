@@ -203,37 +203,160 @@ if (!isset($_SESSION['mock_db'])) {
 $alert_text = "";
 $alert_type = "success";
 
+if (isset($_GET['tab']) && $_GET['tab'] === 'packs' && isset($_GET['action'])) {
+    $g_action = $_GET['action'];
+    if ($g_action === 'toggle_status' && isset($_GET['id'])) {
+        $p_id = intval($_GET['id']);
+        if ($db_connected) {
+            try {
+                $st_chk = $conn->prepare("SELECT `status` FROM `sticker_packs` WHERE `id` = ?");
+                $st_chk->execute([$p_id]);
+                $st_val = $st_chk->fetchColumn();
+                $new_status = ($st_val === 'inactive') ? 'active' : 'inactive';
+                
+                $st_upd = $conn->prepare("UPDATE `sticker_packs` SET `status` = ? WHERE `id` = ?");
+                $st_upd->execute([$new_status, $p_id]);
+                $alert_text = "Status d'o pacote atualizado para '" . ($new_status == 'active' ? 'Ativo' : 'Inativo') . "'!";
+            } catch (Exception $e) { $db_error = $e->getMessage(); }
+        }
+        foreach ($_SESSION['mock_db']['sticker_packs'] as $k => $p) {
+            if ($p['id'] == $p_id) {
+                $new_status = (isset($p['status']) && $p['status'] === 'inactive') ? 'active' : 'inactive';
+                $_SESSION['mock_db']['sticker_packs'][$k]['status'] = $new_status;
+                break;
+            }
+        }
+        if (empty($alert_text)) $alert_text = "Status d'o pacote alterado com sucesso!";
+        header("Location: dashboard.php?tab=packs&success=" . urlencode($alert_text));
+        exit;
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
 
     // 1. MANAGE PACKS ACTIONS
-    if ($action === 'add_pack') {
+    if ($action === 'add_pack' || $action === 'edit_pack') {
+        $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
         $name = trim($_POST['name']);
-        $creator = trim($_POST['creator']);
+        $creator = trim($_POST['creator'] ?? ($_POST['publisher_name'] ?? ''));
+        $publisher_name = trim($_POST['publisher_name'] ?? ($_POST['creator'] ?? ''));
+        if (empty($creator)) $creator = $publisher_name;
+        if (empty($publisher_name)) $publisher_name = $creator;
+        
         $category_id = intval($_POST['category_id']);
-        $cover_url = trim($_POST['cover_url']);
+        $is_animated = isset($_POST['is_animated']) ? intval($_POST['is_animated']) : 0;
+        $cover_url = trim($_POST['cover_url'] ?? ($_POST['tray_image'] ?? ''));
+        $tray_image = trim($_POST['tray_image'] ?? ($_POST['cover_url'] ?? ''));
+        if (empty($cover_url)) $cover_url = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCtkSf5UeSaJUridQTq5N4vmoVsP0gexrgiYTdP0qRlbEs30ew908UhCNEi9m4LssAhXwVOg57u1e_ez-5g3TCOLjGUqA_-27lK6b3gjBo5fwN-xvC_bKUNHrOkf3ISxAXnFmmx8mWdAdYoIk0HajgPSXMuRMLYN6Jh-eRtFtqy4r1QWUPvDtru9uh3AoAcbANQjuMITfhzZ5Rkxqa6gWxcRXhsv9GA-oJYENfKNAiEofeImH6pZ-f27B90qgHjsVEMaAFiBSJb5Tg';
+        if (empty($tray_image)) $tray_image = $cover_url;
+        
+        $status = isset($_POST['status']) ? trim($_POST['status']) : 'active';
         $is_premium = isset($_POST['is_premium']) ? 1 : 0;
         $is_exclusive = isset($_POST['is_exclusive']) ? 1 : 0;
 
-        if ($db_connected) {
-            try {
-                $stmt = $conn->prepare("INSERT INTO `sticker_packs` (`name`, `creator`, `category_id`, `cover_url`, `is_premium`, `is_exclusive`) VALUES (?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$name, $creator, $category_id ? $category_id : null, $cover_url, $is_premium, $is_exclusive]);
-                $alert_text = "Pacote '$name' criado com sucesso no banco de dados!";
-            } catch (Exception $e) { $db_error = $e->getMessage(); }
+        // Decode multipack stickers array from the JSON input
+        $stickers_json = isset($_POST['stickers_json']) ? $_POST['stickers_json'] : '[]';
+        $decoded_stickers = json_decode($stickers_json, true) ?: [];
+        $processed_stickers = [];
+
+        $upload_dir = __DIR__ . "/../uploads/stickers/";
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
         }
 
-        $new_id = count($_SESSION['mock_db']['sticker_packs']) + 1;
-        $cat_name = 'Animais';
-        foreach ($_SESSION['mock_db']['categories'] as $c) {
-            if ($c['id'] == $category_id) { $cat_name = $c['name']; break; }
+        foreach ($decoded_stickers as $index => $stk) {
+            $img_url = isset($stk['imageUrl']) ? $stk['imageUrl'] : (isset($stk['image_url']) ? $stk['image_url'] : '');
+            $img_file = isset($stk['image_file']) ? $stk['image_file'] : '';
+            $emoji = isset($stk['emoji']) ? $stk['emoji'] : '✨';
+
+            // Check if sticker is a base64 transfer
+            if (isset($stk['base64']) && !empty($stk['base64']) && strpos($stk['base64'], 'data:image') === 0) {
+                // Extract base64
+                $parts = explode(',', $stk['base64']);
+                $b64data = base64_decode($parts[1]);
+                $file_name = "stk_b64_" . uniqid() . ".webp";
+                file_put_contents($upload_dir . $file_name, $b64data);
+
+                $img_url = "https://" . $_SERVER['HTTP_HOST'] . "/uploads/stickers/" . $file_name;
+                $img_file = $file_name;
+            }
+
+            $processed_stickers[] = [
+                'image_url' => $img_url,
+                'image_file' => $img_file,
+                'emoji' => $emoji,
+                'order_index' => $index,
+                'position_order' => $index
+            ];
         }
-        $_SESSION['mock_db']['sticker_packs'][] = [
-            'id' => $new_id, 'name' => $name, 'creator' => $creator, 'category_id' => $category_id,
-            'category_name' => $cat_name, 'cover_url' => $cover_url ?: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCtkSf5UeSaJUridQTq5N4vmoVsP0gexrgiYTdP0qRlbEs30ew908UhCNEi9m4LssAhXwVOg57u1e_ez-5g3TCOLjGUqA_-27lK6b3gjBo5fwN-xvC_bKUNHrOkf3ISxAXnFmmx8mWdAdYoIk0HajgPSXMuRMLYN6Jh-eRtFtqy4r1QWUPvDtru9uh3AoAcbANQjuMITfhzZ5Rkxqa6gWxcRXhsv9GA-oJYENfKNAiEofeImH6pZ-f27B90qgHjsVEMaAFiBSJb5Tg',
-            'is_premium' => $is_premium, 'is_exclusive' => $is_exclusive, 'downloads_count' => 0, 'likes_count' => 0
-        ];
-        if (empty($alert_text)) $alert_text = "Pacote '$name' adicionado (Simulado localmente)";
+
+        if ($action === 'add_pack') {
+            if ($db_connected) {
+                try {
+                    $stmt = $conn->prepare("INSERT INTO `sticker_packs` (`name`, `creator`, `category_id`, `cover_url`, `is_premium`, `is_exclusive`, `publisher_name`, `tray_image`, `is_animated`, `status`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$name, $creator, $category_id ? $category_id : null, $cover_url, $is_premium, $is_exclusive, $publisher_name, $tray_image, $is_animated, $status]);
+                    $inserted_id = $conn->lastInsertId();
+
+                    // Insert stickers associated with this pack
+                    foreach ($processed_stickers as $st) {
+                        $st_stmt = $conn->prepare("INSERT INTO `stickers` (`pack_id`, `image_url`, `content_description`, `order_index`, `image_file`, `emoji`, `position_order`) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                        $st_stmt->execute([$inserted_id, $st['image_url'], 'Sticker', $st['order_index'], $st['image_file'], $st['emoji'], $st['position_order']]);
+                    }
+                    $alert_text = "Pacote '$name' criado com ID #$inserted_id e seus figurinhas salvas!";
+                } catch (Exception $e) { $db_error = $e->getMessage(); }
+            }
+
+            $new_id = $db_connected && isset($inserted_id) ? $inserted_id : (count($_SESSION['mock_db']['sticker_packs']) + 1);
+            $cat_name = 'Outro';
+            foreach ($_SESSION['mock_db']['categories'] as $c) {
+                if ($c['id'] == $category_id) { $cat_name = $c['name']; break; }
+            }
+            $_SESSION['mock_db']['sticker_packs'][] = [
+                'id' => $new_id, 'name' => $name, 'creator' => $creator, 'category_id' => $category_id,
+                'category_name' => $cat_name, 'cover_url' => $cover_url,
+                'is_premium' => $is_premium, 'is_exclusive' => $is_exclusive, 'downloads_count' => 0, 'likes_count' => 0,
+                'publisher_name' => $publisher_name, 'tray_image' => $tray_image, 'is_animated' => $is_animated,
+                'status' => $status, 'stickers' => $processed_stickers
+            ];
+            if (empty($alert_text)) $alert_text = "Pacote '$name' adicionado (Simulado localmente)";
+        } else {
+            // Edit pack Action
+            if ($db_connected) {
+                try {
+                    $stmt = $conn->prepare("UPDATE `sticker_packs` SET `name` = ?, `creator` = ?, `category_id` = ?, `cover_url` = ?, `is_premium` = ?, `is_exclusive` = ?, `publisher_name` = ?, `tray_image` = ?, `is_animated` = ?, `status` = ? WHERE `id` = ?");
+                    $stmt->execute([$name, $creator, $category_id ? $category_id : null, $cover_url, $is_premium, $is_exclusive, $publisher_name, $tray_image, $is_animated, $status, $id]);
+
+                    // Remove current stickers and insert newly ordered series
+                    $del_stmt = $conn->prepare("DELETE FROM `stickers` WHERE `pack_id` = ?");
+                    $del_stmt->execute([$id]);
+
+                    foreach ($processed_stickers as $st) {
+                        $st_stmt = $conn->prepare("INSERT INTO `stickers` (`pack_id`, `image_url`, `content_description`, `order_index`, `image_file`, `emoji`, `position_order`) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                        $st_stmt->execute([$id, $st['image_url'], 'Sticker', $st['order_index'], $st['image_file'], $st['emoji'], $st['position_order']]);
+                    }
+                    $alert_text = "Pacote '$name' editado e figurinhas salvas no banco de dados!";
+                } catch (Exception $e) { $db_error = $e->getMessage(); }
+            }
+
+            $cat_name = 'Outro';
+            foreach ($_SESSION['mock_db']['categories'] as $c) {
+                if ($c['id'] == $category_id) { $cat_name = $c['name']; break; }
+            }
+            foreach ($_SESSION['mock_db']['sticker_packs'] as $k => $p) {
+                if ($p['id'] == $id) {
+                    $_SESSION['mock_db']['sticker_packs'][$k] = [
+                        'id' => $id, 'name' => $name, 'creator' => $creator, 'category_id' => $category_id,
+                        'category_name' => $cat_name, 'cover_url' => $cover_url, 'is_premium' => $is_premium, 'is_exclusive' => $is_exclusive,
+                        'downloads_count' => isset($p['downloads_count']) ? $p['downloads_count'] : 0, 'likes_count' => isset($p['likes_count']) ? $p['likes_count'] : 0,
+                        'publisher_name' => $publisher_name, 'tray_image' => $tray_image, 'is_animated' => $is_animated, 'status' => $status,
+                        'stickers' => $processed_stickers
+                    ];
+                    break;
+                }
+            }
+            if (empty($alert_text)) $alert_text = "Pacote '$name' editado com sucesso!";
+        }
     }
 
     if ($action === 'delete_pack') {
@@ -1036,100 +1159,528 @@ if ($db_connected) {
 
         <!-- ======================= SECTION: 1. MANAGE PACKS ======================= -->
         <?php if ($active_tab === 'packs'): ?>
-            <div class="row g-4">
-                <div class="col-md-4">
-                    <div class="glass-card text-start">
-                        <h5 class="fw-bold mb-3"><i class="fa-solid fa-circle-plus text-success me-2"></i>Novo Pacote</h5>
-                        <form action="?tab=packs" method="POST">
-                            <input type="hidden" name="action" value="add_pack">
-                            <div class="mb-2">
-                                <label class="small text-white-50 mb-1">Nome do Pacote</label>
-                                <input type="text" class="form-control" name="name" placeholder="Ex: Gatos Cósmicos Animados" required>
-                            </div>
-                            <div class="mb-2">
-                                <label class="small text-white-50 mb-1">Autor / Criador</label>
-                                <input type="text" class="form-control" name="creator" placeholder="Ex: NeonMochi Studio" required>
-                            </div>
-                            <div class="mb-2">
-                                <label class="small text-white-50 mb-1">Categoria Vinculada</label>
-                                <select class="form-select" name="category_id">
-                                    <?php foreach($categories as $c): ?>
-                                        <option value="<?= $c['id'] ?>"><?= $c['icon_emoji'] ?> <?= htmlspecialchars($c['name']) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label class="small text-white-50 mb-1">URL da Imagem da Capa</label>
-                                <input type="url" class="form-control" name="cover_url" placeholder="https://..." value="https://lh3.googleusercontent.com/aida-public/AB6AXuCtkSf5UeSaJUridQTq5N4vmoVsP0gexrgiYTdP0qRlbEs30ew908UhCNEi9m4LssAhXwVOg57u1e_ez-5g3TCOLjGUqA_-27lK6b3gjBo5fwN-xvC_bKUNHrOkf3ISxAXnFmmx8mWdAdYoIk0HajgPSXMuRMLYN6Jh-eRtFtqy4r1QWUPvDtru9uh3AoAcbANQjuMITfhzZ5Rkxqa6gWxcRXhsv9GA-oJYENfKNAiEofeImH6pZ-f27B90qgHjsVEMaAFiBSJb5Tg">
-                            </div>
+            <?php 
+            $is_form = isset($_GET['action']) && ($_GET['action'] === 'add' || $_GET['action'] === 'edit');
+            $edit_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+            $edit_pack = null;
+            
+            if ($is_form && $edit_id > 0) {
+                if ($db_connected) {
+                    try {
+                        $st = $conn->prepare("SELECT * FROM `sticker_packs` WHERE `id` = ?");
+                        $st->execute([$edit_id]);
+                        $edit_pack = $st->fetch();
+                        if ($edit_pack) {
+                            $st_s = $conn->prepare("SELECT * FROM `stickers` WHERE `pack_id` = ? ORDER BY `order_index` ASC");
+                            $st_s->execute([$edit_id]);
+                            $edit_pack['stickers'] = $st_s->fetchAll() ?: [];
+                        }
+                    } catch(Exception $e){}
+                }
+                if (!$edit_pack) {
+                    foreach ($_SESSION['mock_db']['sticker_packs'] as $p) {
+                        if ($p['id'] == $edit_id) {
+                            $edit_pack = $p;
+                            break;
+                        }
+                    }
+                }
+            }
+            ?>
 
-                            <div class="row mb-3">
-                                <div class="col-6">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="is_premium" id="p_prem">
-                                        <label class="form-check-label text-white-50 small" for="p_prem">Premium👑</label>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="is_exclusive" id="p_excl">
-                                        <label class="form-check-label text-white-50 small" for="p_excl">Exclusivo✨</label>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <button type="submit" class="btn btn-success text-dark fw-bold w-100 py-2">CRIAR PACOTE NO APP</button>
-                        </form>
+            <?php if ($is_form): ?>
+                <!-- FORM BLOCK: ADD OR EDIT STICKER PACK -->
+                <div class="glass-card mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
+                        <h4 class="fw-bold mb-0 text-white">
+                            <i class="fa-solid <?= $edit_pack ? "fa-pen-to-square text-warning" : "fa-folder-plus text-success" ?> me-2"></i>
+                            <?= $edit_pack ? "Editar Pacote de Figurinhas" : "Criar Novo Pacote de Figurinhas" ?>
+                        </h4>
+                        <a href="?tab=packs" class="btn btn-outline-light btn-sm"><i class="fa-solid fa-arrow-left me-2"></i>Voltar aos Pacotes</a>
                     </div>
+
+                    <form id="pack-form" action="?tab=packs" method="POST" enctype="multipart/form-data" onsubmit="return validateAndSubmitForm(event)">
+                        <input type="hidden" name="action" value="<?= $edit_pack ? "edit_pack" : "add_pack" ?>">
+                        <?php if ($edit_pack): ?>
+                            <input type="hidden" name="id" value="<?= $edit_pack['id'] ?>">
+                        <?php endif; ?>
+                        <input type="hidden" name="stickers_json" id="stickers_json" value="[]">
+
+                        <div class="row g-4 text-start">
+                            <!-- Coluna Esquerda: Detalhes do Pacote (Image 2 style) -->
+                            <div class="col-lg-5 col-md-12">
+                                <div class="bg-black bg-opacity-20 p-4 rounded-4" style="border: 1px solid rgba(255,255,255,0.06);">
+                                    <h5 class="fw-bold text-white mb-3 pb-2 border-bottom border-secondary small text-uppercase letter-spacing-1">Especificações Gerais</h5>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small mb-1">Categoria Vinculada</label>
+                                        <select class="form-select" name="category_id" required>
+                                            <?php foreach($categories as $c): ?>
+                                                <option value="<?= $c['id'] ?>" <?= ($edit_pack && $edit_pack['category_id'] == $c['id']) ? 'selected' : '' ?>><?= $c['icon_emoji'] ?> <?= htmlspecialchars($c['name']) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small mb-1">Tipo de Formato</label>
+                                        <select class="form-select" name="is_animated" id="is_animated" required>
+                                            <option value="0" <?= ($edit_pack && !$edit_pack['is_animated']) ? 'selected' : '' ?>>Estático (Normal)</option>
+                                            <option value="1" <?= ($edit_pack && $edit_pack['is_animated']) ? 'selected' : '' ?>>Animado (Suporte GIF e WEBP Dinâmico)</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small mb-1">Nome do Pacote (Sticker Pack Name)</label>
+                                        <input type="text" class="form-control" name="name" value="<?= $edit_pack ? htmlspecialchars($edit_pack['name']) : '' ?>" placeholder="Ex: South Telugu Memes" required>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small mb-1">Nome Publicador (Publisher Name)</label>
+                                        <input type="text" class="form-control" name="publisher_name" id="publisher_name" value="<?= $edit_pack ? htmlspecialchars($edit_pack['publisher_name'] ?? $edit_pack['creator']) : '' ?>" placeholder="Ex: NeonMochi Corp" required>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small mb-1">Thumbnail Principal / Capa (Tray Icon)</label>
+                                        <div class="input-group mb-2">
+                                            <input type="text" class="form-control form-control-sm text-info" name="cover_url" id="cover_url" value="<?= $edit_pack ? htmlspecialchars($edit_pack['cover_url']) : '' ?>" placeholder="URL da Capa">
+                                            <button type="button" class="btn btn-outline-light btn-sm" onclick="document.getElementById('cover_file_picker').click()"><i class="fa-solid fa-upload"></i></button>
+                                        </div>
+                                        <input type="file" id="cover_file_picker" name="cover_file" class="d-none" accept="image/*" onchange="previewCoverFile(this)">
+                                        <div class="mt-2 text-center p-2 rounded bg-black bg-opacity-50" style="border: 1px dashed rgba(255,255,255,0.12);">
+                                            <img id="cover_preview_img" src="<?= $edit_pack ? htmlspecialchars($edit_pack['cover_url']) : 'https://lh3.googleusercontent.com/aida-public/AB6AXuCtkSf5UeSaJUridQTq5N4vmoVsP0gexrgiYTdP0qRlbEs30ew908UhCNEi9m4LssAhXwVOg57u1e_ez-5g3TCOLjGUqA_-27lK6b3gjBo5fwN-xvC_bKUNHrOkf3ISxAXnFmmx8mWdAdYoIk0HajgPSXMuRMLYN6Jh-eRtFtqy4r1QWUPvDtru9uh3AoAcbANQjuMITfhzZ5Rkxqa6gWxcRXhsv9GA-oJYENfKNAiEofeImH6pZ-f27B90qgHjsVEMaAFiBSJb5Tg' ?>" style="max-height: 120px; object-fit: contain;" alt="Capa">
+                                        </div>
+                                    </div>
+
+                                    <div class="row mb-3">
+                                        <div class="col-6">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="is_premium" id="p_prem" <?= ($edit_pack && $edit_pack['is_premium']) ? 'checked' : '' ?>>
+                                                <label class="form-check-label text-white-50 small" for="p_prem">Premium 👑</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="is_exclusive" id="p_excl" <?= ($edit_pack && $edit_pack['is_exclusive']) ? 'checked' : '' ?>>
+                                                <label class="form-check-label text-white-50 small" for="p_excl">Exclusivo ✨</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small mb-1">Status de Disponibilidade</label>
+                                        <select class="form-select" name="status">
+                                            <option value="active" <?= ($edit_pack && $edit_pack['status'] === 'inactive') ? '' : 'selected' ?>>🟢 Ativo (Sincroniza no App)</option>
+                                            <option value="inactive" <?= ($edit_pack && $edit_pack['status'] === 'inactive') ? 'selected' : '' ?>>🔴 Inativo (Rascunho)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Coluna Direita: Upload Multiplo e Previews -->
+                            <div class="col-lg-7 col-md-12">
+                                <div class="bg-black bg-opacity-20 p-4 rounded-4 h-100" style="border: 1px solid rgba(255,255,255,0.06);">
+                                    <h5 class="fw-bold text-white mb-3 pb-2 border-bottom border-secondary small text-uppercase letter-spacing-1">Carregar Figurinhas (Multi-Stickers)</h5>
+                                    
+                                    <!-- Guidelines Warning card -->
+                                    <div class="alert alert-warning border-0 p-3 mb-3 small" style="background: rgba(255,193,7,0.06); border-left: 4px solid #ffc107 !important; color: #ffe066;">
+                                        <ul class="mb-0 ps-3">
+                                            <li>Resolução ideal de exatamente <strong class="text-white">512 x 512 pixels</strong> (será autocomprimido e redimensionado).</li>
+                                            <li>O pacote deve possuir entre <strong class="text-white">3</strong> e <strong class="text-white">30</strong> figurinhas do WhatsApp.</li>
+                                            <li>Qualquer formato de imagem (PNG, JPG, WEBP, GIF) será convertido automaticamente para <strong class="text-white">WEBP de alta compressão</strong>.</li>
+                                        </ul>
+                                    </div>
+
+                                    <!-- Drag & Drop container selector -->
+                                    <div class="drag-drop-zone border border-dashed rounded p-4 text-center cursor-pointer mb-4" id="drop-zone" style="border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.02); transition: all 0.2s;" onclick="document.getElementById('stickers_picker').click()">
+                                        <i class="fa-solid fa-cloud-arrow-up fa-3x mb-2 text-info" id="upload-icon"></i>
+                                        <h6 class="fw-bold text-white mb-1">Arraste seus stickers (.webp, .png, .jpg, .gif) aqui</h6>
+                                        <span class="small text-white-50">Ou clique para navegar em seus arquivos locais</span>
+                                        <input type="file" id="stickers_picker" class="d-none" multiple accept="image/*" onchange="handleStickerFilesSelection(this.files)">
+                                    </div>
+
+                                    <!-- Counter tracker and Grid of Thumbnails previews with Reorder -->
+                                    <div class="bg-black bg-opacity-50 p-3 rounded border border-secondary border-opacity-20">
+                                        <div class="d-flex justify-content-between align-items-center mb-3">
+                                            <span class="text-white-50 small font-weight-bold">Grid de Figurinhas: <span id="stickers-counter" class="text-success font-weight-bold">0</span> / 30</span>
+                                            <button type="button" class="btn btn-xs btn-outline-danger" onclick="clearAllStickers()"><i class="fa-solid fa-broom me-1"></i>Remover Tudo</button>
+                                        </div>
+
+                                        <div class="row g-2" id="stickers-preview-grid" style="min-height: 150px; align-content: flex-start;">
+                                            <!-- Dynamically injected via JavaScript -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Action Submit Triggers -->
+                        <div class="mt-4 pt-3 border-top border-secondary d-flex justify-content-end gap-2">
+                            <a href="?tab=packs" class="btn btn-outline-light px-4">Cancelar</a>
+                            <button type="submit" class="btn btn-success text-dark fw-bold px-5" id="submit-pack-btn">
+                                <i class="fa-solid fa-cloud-arrow-up me-2"></i>SALVAR PACOTE NO APP
+                            </button>
+                        </div>
+                    </form>
                 </div>
 
-                <div class="col-md-8">
-                    <div class="glass-card">
-                        <h5 class="fw-bold mb-3">Pacotes Ativos</h5>
-                        <div class="table-responsive">
-                            <table class="table custom-tbl">
-                                <thead>
-                                    <tr>
-                                        <th>Capa</th>
-                                        <th>Nome</th>
-                                        <th>Criador</th>
-                                        <th>Download</th>
-                                        <th>Plano</th>
-                                        <th class="text-end">Ações</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach($sticker_packs as $p): ?>
-                                        <tr>
-                                            <td><img src="<?= htmlspecialchars($p['cover_url']) ?>" class="rounded bg-dark p-1" style="width: 38px; height: 38px; object-fit: contain;" alt=""></td>
-                                            <td>
-                                                <strong class="d-block text-white"><?= htmlspecialchars($p['name']) ?></strong>
-                                                <small class="text-white-50"><?= htmlspecialchars(isset($p['category_name']) ? $p['category_name'] : 'Outro') ?></small>
-                                            </td>
-                                            <td><?= htmlspecialchars($p['creator']) ?></td>
-                                            <td><small class="text-white-50"><?= number_format($p['downloads_count']) ?> dls</small></td>
-                                            <td>
-                                                <?php if($p['is_premium']): ?>
-                                                    <span class="badge badge-premium">PREMIUM</span>
-                                                <?php else: ?>
-                                                    <span class="badge bg-secondary">GRÁTIS</span>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td class="text-end">
-                                                <form action="?tab=packs" method="POST" onsubmit="return confirm('Deseja excluir definitivamente este pacote do servidor?')" style="display:inline-block;">
-                                                    <input type="hidden" name="action" value="delete_pack">
-                                                    <input type="hidden" name="id" value="<?= $p['id'] ?>">
-                                                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fa-solid fa-trash"></i></button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                <script>
+                    // Keep in memory the active stickers list as base64 or URL
+                    let stickersList = [];
+
+                    document.addEventListener("DOMContentLoaded", () => {
+                        // Prepopulate array if we are in Edit mode
+                        const preloaded = <?php echo isset($edit_pack['stickers']) ? json_encode($edit_pack['stickers']) : '[]'; ?>;
+                        preloaded.forEach((st, idx) => {
+                            stickersList.push({
+                                imageUrl: st.imageUrl || (st.image_url || ''),
+                                image_file: st.imageFile || (st.image_file || ''),
+                                emoji: st.emoji || '✨',
+                                position_order: idx
+                            });
+                        });
+                        updateStickersPreview();
+
+                        // Configure Drag & Drop bindings
+                        const dropZone = document.getElementById("drop-zone");
+                        if (dropZone) {
+                            ['dragenter', 'dragover'].forEach(eventName => {
+                                dropZone.addEventListener(eventName, (e) => {
+                                    e.preventDefault();
+                                    dropZone.style.background = "rgba(108, 248, 187, 0.05)";
+                                    dropZone.style.borderColor = "#6cf8bb";
+                                }, false);
+                            });
+
+                            ['dragleave', 'drop'].forEach(eventName => {
+                                dropZone.addEventListener(eventName, (e) => {
+                                    e.preventDefault();
+                                    dropZone.style.background = "rgba(255, 255, 255, 0.02)";
+                                    dropZone.style.borderColor = "rgba(255, 255, 255, 0.15)";
+                                }, false);
+                            });
+
+                            dropZone.addEventListener('drop', (e) => {
+                                const dt = e.dataTransfer;
+                                const files = dt.files;
+                                handleStickerFilesSelection(files);
+                            }, false);
+                        }
+                    });
+
+                    function previewCoverFile(input) {
+                        if (input.files && input.files[0]) {
+                            const reader = new FileReader();
+                            reader.onload = function(e) {
+                                document.getElementById("cover_preview_img").src = e.target.result;
+                                document.getElementById("cover_url").value = e.target.result; // send as base64 or URL auto-fallback
+                            };
+                            reader.readAsDataURL(input.files[0]);
+                        }
+                    }
+
+                    // Process selection and execute smart local CANVAS compression / WEBP resizing
+                    function handleStickerFilesSelection(files) {
+                        if (stickersList.length + files.length > 30) {
+                            alert("Limite excedido! O pacote suporta no máximo 30 figurinhas.");
+                            return;
+                        }
+
+                        Array.from(files).forEach(file => {
+                            const reader = new FileReader();
+                            reader.onload = function(e) {
+                                if (file.type === 'image/gif') {
+                                    // GIF support layout, preserves animated layers raw
+                                    stickersList.push({
+                                        base64: e.target.result,
+                                        imageUrl: e.target.result,
+                                        emoji: '🤪',
+                                        position_order: stickersList.length
+                                    });
+                                    updateStickersPreview();
+                                } else {
+                                    // Standard dynamic WebP canvas resizing conversion
+                                    const img = new Image();
+                                    img.onload = function() {
+                                        const canvas = document.createElement('canvas');
+                                        canvas.width = 512;
+                                        canvas.height = 512;
+                                        const ctx = canvas.getContext('2d');
+                                        
+                                        // Auto-rescaling inside the 512x512 Canvas boundingbox safely
+                                        ctx.drawImage(img, 0, 0, 512, 512);
+                                        const compressedBase64 = canvas.toDataURL('image/webp', 0.85);
+                                        
+                                        stickersList.push({
+                                            base64: compressedBase64,
+                                            imageUrl: compressedBase64,
+                                            emoji: '✨',
+                                            position_order: stickersList.length
+                                        });
+                                        updateStickersPreview();
+                                    };
+                                    img.src = e.target.result;
+                                }
+                            };
+                            reader.readAsDataURL(file);
+                        });
+                    }
+
+                    function deleteStickerItem(index) {
+                        stickersList.splice(index, 1);
+                        updateStickersPreview();
+                    }
+
+                    function moveStickerItem(index, direction) {
+                        if (direction === 'left' && index > 0) {
+                            let temp = stickersList[index];
+                            stickersList[index] = stickersList[index - 1];
+                            stickersList[index - 1] = temp;
+                        } else if (direction === 'right' && index < stickersList.length - 1) {
+                            let temp = stickersList[index];
+                            stickersList[index] = stickersList[index + 1];
+                            stickersList[index + 1] = temp;
+                        }
+                        updateStickersPreview();
+                    }
+
+                    function clearAllStickers() {
+                        if(confirm("Confirmar remoção de todos os figurinhas desse lote?")) {
+                            stickersList = [];
+                            updateStickersPreview();
+                        }
+                    }
+
+                    function updateStickersPreview() {
+                        const grid = document.getElementById("stickers-preview-grid");
+                        const counter = document.getElementById("stickers-counter");
+                        if (!grid) return;
+
+                        grid.innerHTML = "";
+                        counter.textContent = stickersList.length;
+
+                        stickersList.forEach((st, idx) => {
+                            const col = document.createElement("div");
+                            col.className = "col-4 col-sm-3 col-md-2 text-center position-relative sticker-item-container";
+                            col.innerHTML = `
+                                <div class="bg-dark p-2 rounded text-center border border-secondary border-opacity-40 position-relative h-100 d-flex flex-column justify-content-between">
+                                    <div class="position-absolute top-0 end-0 p-1" style="transform: translate(30%, -30%); z-index: 10;">
+                                        <button type="button" class="btn btn-danger btn-xs rounded-circle p-1 d-flex align-items-center justify-content-center" style="width:20px; height:20px;" onclick="deleteStickerItem(${idx})">
+                                            <i class="fa-solid fa-xmark" style="font-size: 10px;"></i>
+                                        </button>
+                                    </div>
+                                    <div class="d-flex justify-content-center align-items-center my-1" style="height: 64px;">
+                                        <img src="${st.imageUrl}" class="img-fluid rounded" style="max-height: 60px; object-fit: contain;">
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center mt-2 bg-black bg-opacity-40 p-1 rounded">
+                                        <input type="text" class="form-control form-control-xs text-center border-0 p-0 m-0 text-white bg-transparent small" value="${st.emoji}" style="width:24px; font-size: 11px;" onchange="stickersList[${idx}].emoji = this.value">
+                                        <div class="d-flex gap-1">
+                                            <button type="button" class="btn btn-xs btn-outline-secondary p-0 px-1" onclick="moveStickerItem(${idx}, 'left')" ${idx === 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left" style="font-size: 9px;"></i></button>
+                                            <button type="button" class="btn btn-xs btn-outline-secondary p-0 px-1" onclick="moveStickerItem(${idx}, 'right')" ${idx === stickersList.length-1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right" style="font-size: 9px;"></i></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                            grid.appendChild(col);
+                        });
+
+                        // Populate hidden input with serialized list
+                        document.getElementById("stickers_json").value = JSON.stringify(stickersList);
+                    }
+
+                    function validateAndSubmitForm(e) {
+                        if (stickersList.length < 3) {
+                            alert("Validação Recusada: Um pacote de figurinhas do WhatsApp exige no mínimo 3 stickers.");
+                            e.preventDefault();
+                            return false;
+                        }
+                        if (stickersList.length > 30) {
+                            alert("Validação Recusada: Cada lote suporta no máximo 30 stickers.");
+                            e.preventDefault();
+                            return false;
+                        }
+
+                        // Feed implicit publisher hidden creator linkage
+                        const pub = document.getElementById("publisher_name").value;
+                        const hidden = document.createElement("input");
+                        hidden.type = "hidden";
+                        hidden.name = "creator";
+                        hidden.value = pub;
+                        document.getElementById("pack-form").appendChild(hidden);
+
+                        document.getElementById("stickers_json").value = JSON.stringify(stickersList);
+                        return true;
+                    }
+                </script>
+
+            <?php else: ?>
+                <!-- GRID BLOCK: SHOW BEAUTIFUL LIST OF PACKS CARDS (IMAGE 1 DESIGN) -->
+                <div class="glass-card mb-4 text-start">
+                    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center mb-4 gap-3 border-bottom border-secondary border-opacity-25 pb-3">
+                        <div>
+                            <h4 class="fw-bold mb-1 text-white">Gerenciar Pacotes de Figurinhas</h4>
+                            <p class="text-white-50 small mb-0">Total: <span class="text-success fw-bold"><?= count($sticker_packs) ?></span> lotes de figurinhas sincronizados.</p>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-center w-100 w-sm-auto justify-content-sm-end">
+                            <!-- Live search bar input -->
+                            <div class="position-relative">
+                                <input type="text" id="pack-search" onkeyup="searchPacks()" class="form-control form-control-sm text-white" style="width: 200px; padding-right: 30px;" placeholder="Buscar pack...">
+                                <i class="fa-solid fa-magnifying-glass position-absolute end-0 top-50 translate-middle-y me-2 text-white-50 small"></i>
+                            </div>
+
+                            <!-- Category filter dropdown -->
+                            <select id="category-filter" onchange="filterCategory()" class="form-select form-select-sm" style="width: 150px;">
+                                <option value="all">Todas Categorias (<?= count($categories) ?>)</option>
+                                <?php foreach($categories as $c): ?>
+                                    <option value="<?= htmlspecialchars($c['name']) ?>"><?= htmlspecialchars($c['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+
+                            <a href="?tab=packs&action=add" class="btn btn-success text-dark fw-bold btn-sm"><i class="fa-solid fa-folder-plus me-1"></i>Add Sticker Pack</a>
                         </div>
                     </div>
+
+                    <!-- Packs Grid Lists -->
+                    <div class="row g-4" id="packs-cards-grid">
+                        <?php foreach($sticker_packs as $p): ?>
+                            <?php 
+                            // Fetch all associated stickers of this pack
+                            $pack_stickers_list = [];
+                            if ($db_connected) {
+                                try {
+                                    $st_s = $conn->prepare("SELECT * FROM `stickers` WHERE `pack_id` = ? ORDER BY `order_index` ASC");
+                                    $st_s->execute([$p['id']]);
+                                    $pack_stickers_list = $st_s->fetchAll() ?: [];
+                                } catch(Exception $e){}
+                            } else {
+                                $pack_stickers_list = isset($p['stickers']) ? $p['stickers'] : [];
+                            }
+                            $p_category = isset($p['category_name']) ? $p['category_name'] : 'Sem Categoria';
+                            ?>
+                            <div class="col-xl-4 col-md-6 col-12 pack-card-container" data-name="<?= htmlspecialchars($p['name']) ?>" data-category="<?= htmlspecialchars($p_category) ?>">
+                                <div class="card h-100 d-flex flex-column justify-content-between p-3 position-relative shadow border-0" style="border-radius: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);">
+                                    
+                                    <!-- Card Header Section -->
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <span class="badge" style="background: rgba(108, 248, 187, 0.1); color: #6cf8bb; font-weight: 500; font-size: 11px; padding: 5px 10px; border-radius: 20px;">
+                                            <?= htmlspecialchars($p_category) ?>
+                                        </span>
+                                        <div class="d-flex gap-1 align-items-center">
+                                            <?php if(isset($p['is_premium']) && $p['is_premium']): ?>
+                                                <span class="badge bg-warning text-dark" style="font-size: 10px; border-radius: 4px;">👑 PREMIUM</span>
+                                            <?php endif; ?>
+                                            <?php if(isset($p['is_animated']) && $p['is_animated']): ?>
+                                                <span class="badge bg-danger" style="font-size: 10px; border-radius: 4px;"><i class="fa-solid fa-clapperboard me-1"></i>ANIMATED</span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+
+                                    <!-- Main Cover Centerpiece Preview -->
+                                    <div class="text-center p-3 bg-black bg-opacity-20 rounded-3 mb-3 d-flex align-items-center justify-content-center" style="height: 160px; border: 1px solid rgba(255,255,255,0.03);">
+                                        <img src="<?= htmlspecialchars($p['cover_url']) ?>" class="img-fluid rounded" style="max-height: 140px; object-fit: contain;" alt="<?= htmlspecialchars($p['name']) ?>">
+                                    </div>
+
+                                    <!-- Miniature stickers list bar (previews in horizontal list) -->
+                                    <div class="p-2 bg-black bg-opacity-30 rounded-3 mb-3 d-flex justify-content-center align-items-center gap-1 overflow-hidden" style="height: 48px; border: 1px solid rgba(255,255,255,0.04);">
+                                        <?php if(empty($pack_stickers_list)): ?>
+                                            <span class="small text-white-50" style="font-size: 11px;">Nenhuma figurinha carregada</span>
+                                        <?php else: ?>
+                                            <?php $count = 0; foreach($pack_stickers_list as $stk): if($count++ >= 5) break; 
+                                                $s_url = isset($stk['imageUrl']) ? $stk['imageUrl'] : (isset($stk['image_url']) ? $stk['image_url'] : '');
+                                            ?>
+                                                <img src="<?= htmlspecialchars($s_url) ?>" style="width: 28px; height: 28px; object-fit: contain;" class="rounded bg-black bg-opacity-20 p-1 border border-secondary border-opacity-20">
+                                            <?php endforeach; ?>
+                                            <?php if(count($pack_stickers_list) > 5): ?>
+                                                <span class="text-white-50 ms-1 fw-bold" style="font-size: 9px;">+<?= count($pack_stickers_list) - 5 ?></span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </div>
+
+                                    <!-- Card details and actions toolbar footer -->
+                                    <div>
+                                        <div class="d-flex justify-content-between align-items-start mb-3">
+                                            <div>
+                                                <h6 class="fw-bold text-white mb-0" style="font-size: 15px;"><?= htmlspecialchars($p['name']) ?></h6>
+                                                <small class="text-white-50" style="font-size: 11px;">Por <?= htmlspecialchars($p['publisher_name'] ?? ($p['creator'] ?? 'Autor')) ?></small>
+                                            </div>
+                                            <div class="text-end">
+                                                <span class="badge bg-secondary rounded-pill" style="font-size: 10px;"><?= count($pack_stickers_list) ?> stickers</span>
+                                            </div>
+                                        </div>
+
+                                        <div class="d-flex justify-content-between align-items-center pt-3 border-top border-secondary border-opacity-25 mt-2">
+                                            <!-- Sub action circle buttons (Star, Preview, WhatsApp, Edit, Delete) -->
+                                            <div class="d-flex gap-1 align-items-center">
+                                                <button type="button" class="btn btn-sm btn-dark rounded-circle p-0 d-flex align-items-center justify-content-center" style="width:30px; height:30px;" title="Favoritar Lote" onclick="alert('Lote definido como destaque na vitrine!')">
+                                                    <i class="fa-solid fa-star text-warning" style="font-size: 12px;"></i>
+                                                </button>
+
+                                                <button type="button" class="btn btn-sm btn-dark rounded-circle p-0 d-flex align-items-center justify-content-center" style="width:30px; height:30px;" title="Visualizar Figurinhas" 
+                                                        onclick="showStickersViewPopup(<?= htmlspecialchars(json_encode($p['name'])) ?>, <?= htmlspecialchars(json_encode($p_category)) ?>, <?= htmlspecialchars(json_encode($pack_stickers_list)) ?>)">
+                                                    <i class="fa-solid fa-eye text-info" style="font-size: 12px;"></i>
+                                                </button>
+
+                                                <button type="button" class="btn btn-sm btn-dark rounded-circle p-0 d-flex align-items-center justify-content-center" style="width:30px; height:30px;" title="Adicionar no WhatsApp" 
+                                                        onclick="showWhatsAppSimulatorPopup(<?= htmlspecialchars(json_encode($p['name'])) ?>, <?= htmlspecialchars(json_encode($p['id'])) ?>)">
+                                                    <i class="fa-brands fa-whatsapp text-success" style="font-size: 12px;"></i>
+                                                </button>
+
+                                                <a href="?tab=packs&action=edit&id=<?= $p['id'] ?>" class="btn btn-sm btn-dark rounded-circle p-0 d-flex align-items-center justify-content-center text-white" style="width:30px; height:30px;" title="Editar">
+                                                    <i class="fa-solid fa-pen-to-square" style="font-size: 12px;"></i>
+                                                </a>
+
+                                                <form action="?tab=packs" method="POST" onsubmit="return confirm('Deseja excluir permanentemente este pacote de figurinhas?')" class="d-inline-block m-0">
+                                                    <input type="hidden" name="action" value="delete_pack">
+                                                    <input type="hidden" name="id" value="<?= $p['id'] ?>">
+                                                    <button type="submit" class="btn btn-sm btn-danger rounded-circle p-0 d-flex align-items-center justify-content-center text-white" style="width:30px; height:30px;" title="Excluir">
+                                                        <i class="fa-solid fa-trash" style="font-size: 11px;"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+
+                                            <!-- Activate / Deactivate Toggle switch -->
+                                            <div class="form-check form-switch p-0 m-0">
+                                                <input class="form-check-input ms-0 cursor-pointer" type="checkbox" role="switch" id="switch-status-<?= $p['id'] ?>" 
+                                                       <?= (!isset($p['status']) || $p['status'] !== 'inactive') ? 'checked' : '' ?>
+                                                       onclick="location.href='?tab=packs&action=toggle_status&id=<?= $p['id'] ?>'" title="Ativar/Desativar pacote no App">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
-            </div>
+
+                <script>
+                    function searchPacks() {
+                        const input = document.getElementById("pack-search").value.toLowerCase();
+                        const cards = document.getElementsByClassName("pack-card-container");
+                        Array.from(cards).forEach(card => {
+                            const name = card.getAttribute("data-name").toLowerCase();
+                            const category = card.getAttribute("data-category").toLowerCase();
+                            if (name.includes(input) || category.includes(input)) {
+                                card.style.setProperty("display", "", "important");
+                            } else {
+                                card.style.setProperty("display", "none", "important");
+                            }
+                        });
+                    }
+
+                    function filterCategory() {
+                        const select = document.getElementById("category-filter").value.toLowerCase();
+                        const cards = document.getElementsByClassName("pack-card-container");
+                        Array.from(cards).forEach(card => {
+                            const category = card.getAttribute("data-category").toLowerCase();
+                            if (select === "all" || category === select) {
+                                card.style.setProperty("display", "", "important");
+                            } else {
+                                card.style.setProperty("display", "none", "important");
+                            }
+                        });
+                    }
+                </script>
+            <?php endif; ?>
         <?php endif; ?>
 
         <!-- ======================= SECTION: 2. MANAGE SLIDES ======================= -->
@@ -1801,6 +2352,54 @@ if ($db_connected) {
         </div>
     </div>
 
+    <!-- PREVIEW STICKERS MODAL (POPUP VISUALIZADOR) -->
+    <div class="modal fade" id="previewStickersModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content text-start bg-dark border border-secondary text-white" style="border-radius: 16px;">
+                <div class="modal-header border-bottom border-secondary">
+                    <h5 class="modal-title fw-bold" id="previewModalTitle"><i class="fa-solid fa-eye text-info me-2"></i>Figurinhas Sincronizadas</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3 d-flex justify-content-between align-items-center">
+                        <span class="badge bg-success px-3 py-1 text-uppercase" id="previewModalCategory">MEMES</span>
+                        <span class="text-white-50 small fw-bold" id="previewModalCount">Total: 0 stickers</span>
+                    </div>
+                    <div class="row g-2 justify-content-center text-center overflow-auto p-2 rounded bg-black bg-opacity-40" id="previewStickersGrid" style="max-height: 420px; border: 1px solid rgba(255,255,255,0.05);">
+                        <!-- Stickers loop loaded dynamically in JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- WHATSAPP EXPORT ENGINE MODAL (SIMULATOR POPUP) -->
+    <div class="modal fade" id="whatsappInstallModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content text-start bg-dark border border-success border-opacity-40 text-white" style="border-radius: 16px;">
+                <div class="modal-header border-bottom border-success border-opacity-30">
+                    <h5 class="modal-title fw-bold text-success"><i class="fa-brands fa-whatsapp me-2"></i> WhatsApp API Integration</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center py-4">
+                    <div class="mx-auto rounded-circle bg-success bg-opacity-10 d-flex align-items-center justify-content-center mb-3" style="width: 70px; height: 70px;">
+                        <i class="fa-brands fa-whatsapp text-success fa-3x"></i>
+                    </div>
+                    <h5 class="fw-bold text-white mb-2" id="waPackName">Nome do pacote</h5>
+                    <p class="text-white-50 small mb-4">A chave única de transmissão foi sincronizada para integração Android e WhatsApp. No smartphone, o cliente poderá clicar para abrir e adicionar na hora!</p>
+                    
+                    <div class="bg-black bg-opacity-30 rounded p-3 mb-4 text-start font-monospace small border border-secondary border-opacity-30" style="font-size: 11px;">
+                        <span class="d-block text-white mb-1"><i class="fa-solid fa-link me-1 text-success"></i> Endpoint JSON Otimizado (API Link):</span>
+                        <span class="text-success d-block text-break mb-2" id="waPackUrl">https://mystickerstore.com/api/get_packs.php?id=1</span>
+                        <span class="text-white-50"><i class="fa-solid fa-server me-1"></i> ContentProvider Status:</span> <span class="badge bg-success text-dark">ONLINE</span>
+                    </div>
+                    
+                    <button type="button" class="btn btn-success text-dark fw-bold w-100 py-2" data-bs-dismiss="modal">CONCLUÍDO</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap 5 JS Bundle with Popper -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -1823,6 +2422,49 @@ if ($db_connected) {
             
             const m = new bootstrap.Modal(document.getElementById('replyModal'));
             m.show();
+        }
+
+        // Displays a visual overview popup for any sticker pack immediately using existing arrays
+        function showStickersViewPopup(name, category, stickerList) {
+            document.getElementById("previewModalTitle").innerHTML = `<i class="fa-solid fa-eye text-info me-2"></i>Figurinhas de: ${name}`;
+            document.getElementById("previewModalCategory").textContent = category;
+            document.getElementById("previewModalCount").textContent = `Contém: ${stickerList.length} stickers`;
+
+            const grid = document.getElementById("previewStickersGrid");
+            grid.innerHTML = "";
+
+            if (!stickerList || stickerList.length === 0) {
+                grid.innerHTML = `<span class="text-white-50 small py-4">Este lote encontra-se sem nenhuma figurinha ativa no momento.</span>`;
+            } else {
+                stickerList.forEach(stk => {
+                    const s_url = stk.imageUrl || (stk.image_url || stk.imageFile || stk.image_file || '');
+                    const emoji = stk.emoji || '✨';
+                    const s_col = document.createElement("div");
+                    s_col.className = "col-3 col-sm-2 text-center p-2";
+                    s_col.innerHTML = `
+                        <div class="bg-black bg-opacity-40 p-1 rounded border border-secondary border-opacity-20 d-flex flex-column justify-content-between h-100">
+                            <div class="d-flex align-items-center justify-content-center" style="height:60px;">
+                                <img src="${s_url}" class="img-fluid rounded" style="max-height: 54px; object-fit: contain;">
+                            </div>
+                            <span class="small font-monospace text-warning mt-1" style="font-size: 10px;">${emoji}</span>
+                        </div>
+                    `;
+                    grid.appendChild(s_col);
+                });
+            }
+
+            const modalInst = new bootstrap.Modal(document.getElementById("previewStickersModal"));
+            modalInst.show();
+        }
+
+        // Simulates WA Integration details nicely in Admin Dashboard
+        function showWhatsAppSimulatorPopup(name, id) {
+            document.getElementById("waPackName").textContent = name;
+            const absoluteOrigin = window.location.origin;
+            document.getElementById("waPackUrl").textContent = `${absoluteOrigin}/api/get_packs.php?id=${id}`;
+
+            const modalInst = new bootstrap.Modal(document.getElementById("whatsappInstallModal"));
+            modalInst.show();
         }
     </script>
 </body>

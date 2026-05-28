@@ -337,6 +337,11 @@ class DbAutoMigration {
                     `is_exclusive` TINYINT(1) DEFAULT 0,
                     `downloads_count` INT DEFAULT 0,
                     `likes_count` INT DEFAULT 0,
+                    `publisher_name` VARCHAR(100) DEFAULT '',
+                    `tray_image` VARCHAR(255) DEFAULT '',
+                    `is_animated` TINYINT(1) DEFAULT 0,
+                    `whatsapp_enabled` TINYINT(1) DEFAULT 1,
+                    `status` VARCHAR(20) DEFAULT 'active',
                     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
                 'columns' => [
@@ -349,6 +354,11 @@ class DbAutoMigration {
                     'is_exclusive' => "TINYINT(1) DEFAULT 0",
                     'downloads_count' => "INT DEFAULT 0",
                     'likes_count' => "INT DEFAULT 0",
+                    'publisher_name' => "VARCHAR(100) DEFAULT ''",
+                    'tray_image' => "VARCHAR(255) DEFAULT ''",
+                    'is_animated' => "TINYINT(1) DEFAULT 0",
+                    'whatsapp_enabled' => "TINYINT(1) DEFAULT 1",
+                    'status' => "VARCHAR(20) DEFAULT 'active'",
                     'created_at' => "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
                 ]
             ],
@@ -359,6 +369,9 @@ class DbAutoMigration {
                     `image_url` VARCHAR(255) NOT NULL,
                     `content_description` VARCHAR(255) DEFAULT '',
                     `order_index` INT DEFAULT 0,
+                    `image_file` VARCHAR(255) DEFAULT '',
+                    `emoji` VARCHAR(20) DEFAULT '✨',
+                    `position_order` INT DEFAULT 0,
                     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
                 'columns' => [
@@ -367,6 +380,9 @@ class DbAutoMigration {
                     'image_url' => "VARCHAR(255) NOT NULL",
                     'content_description' => "VARCHAR(255) DEFAULT ''",
                     'order_index' => "INT DEFAULT 0",
+                    'image_file' => "VARCHAR(255) DEFAULT ''",
+                    'emoji' => "VARCHAR(20) DEFAULT '✨'",
+                    'position_order' => "INT DEFAULT 0",
                     'created_at' => "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
                 ]
             ],

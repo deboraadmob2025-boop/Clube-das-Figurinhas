@@ -47,7 +47,10 @@ if ($db) {
                 $stickers_list[] = [
                     "id" => "remote_" . $st['id'],
                     "imageUrl" => $st['image_url'],
-                    "contentDescription" => $st['content_description']
+                    "contentDescription" => $st['content_description'] ?: '',
+                    "imageFile" => $st['image_file'] ?: '',
+                    "emoji" => $st['emoji'] ?: '✨',
+                    "positionOrder" => (int)$st['position_order']
                 ];
             }
             
@@ -62,6 +65,18 @@ if ($db) {
                 "totalStickers" => (int)$row['total_stickers'],
                 "downloads" => number_format($row['downloads_count']),
                 "likes" => (int)$row['likes_count'],
+                "publisher_name" => $row['publisher_name'] ?: $row['creator'],
+                "tray_image" => $row['tray_image'] ?: $row['cover_url'],
+                "is_animated" => (bool)$row['is_animated'],
+                "whatsapp_enabled" => (bool)$row['whatsapp_enabled'],
+                "status" => $row['status'] ?: 'active',
+                
+                // Optimized custom requested keys
+                "nome" => $row['name'],
+                "categoria" => $row['category_name'] ?: 'General',
+                "thumbnail" => $row['tray_image'] ?: $row['cover_url'],
+                "publisher" => $row['publisher_name'] ?: $row['creator'],
+                "animated" => (bool)$row['is_animated'],
                 "stickers" => $stickers_list
             ];
         }
