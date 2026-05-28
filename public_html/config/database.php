@@ -3,9 +3,9 @@
 
 class Database {
     private $host = "localhost";
-    private $db_name = "sticker_store";
-    private $username = "root";
-    private $password = "";
+    private $db_name = "hgnew679_KingPixCash";
+    private $username = "hgnew679_KingPixCash";
+    private $password = "fx8im7tm737k";
     public $conn;
 
     public function getConnection() {
